@@ -4,7 +4,7 @@ name: Release APK (arm64 + armv7)
 # и armeabi-v7a (32-битные), плюс прогоняем анализ и все тесты.
 #
 # Как это работает:
-#   * push в main/master        → тесты + сборка, APK в артефакты workflow
+#   * push в master/dev         → тесты + сборка, APK в артефакты workflow
 #   * тег v* (например v1.0.0)  → тесты + сборка, APK сразу в GitHub Release
 #     (артефакты не используются, чтобы не расходовать квоту хранилища)
 #   * pull_request              → только тесты и анализатор
@@ -33,6 +33,10 @@ concurrency:
 env:
   FLUTTER_VERSION: '3.50.0'
   JAVA_VERSION: '17'
+  # Секреты нельзя прочитать в `if` шага: env-контекст шага не видит
+  # собственные secrets-переменные, поэтому раньше условие всегда было false
+  # и релиз молча подписывался debug-ключом. Вычисляем флаг на workflow-уровне.
+  KEYSTORE_SET: ${{ secrets.KEYSTORE_BASE64 != '' }}
 
 jobs:
   # ------------------------------------------------------------------
@@ -96,7 +100,7 @@ jobs:
       # Необязательная подпись: если в секретах лежит keystore в base64,
       # подписываем им; иначе Flutter использует debug-ключ.
       - name: Подготовка keystore (если задан)
-        if: ${{ env.KEYSTORE_BASE64 != '' }}
+        if: ${{ env.KEYSTORE_SET == 'true' }}
         env:
           KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
           KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}

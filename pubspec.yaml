@@ -27,6 +27,9 @@ dependencies:
   share_plus: ^10.1.4
   material_ui: ^1.11.0
 
+  # Компоненты Forui: статус-бейджи и кнопка отмены в списке загрузок
+  forui: ^0.27.7
+
 dev_dependencies:
   flutter_test:
     sdk: flutter

@@ -1,5 +1,6 @@
 import 'dart:io';
 
+import 'package:forui/forui.dart';
 import 'package:material_ui/material_ui.dart';
 import 'package:share_plus/share_plus.dart';
 
@@ -155,103 +156,146 @@ class JobCard extends StatelessWidget {
         ),
     };
 
-    return GlassCard(
-      key: Key('job-${job.fileName}'),
-      accent: job.status == DownloadStatus.done
-          ? AppColors.tertiary
-          : job.status == DownloadStatus.failed
-              ? AppColors.error
-              : null,
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            children: [
-              Icon(icon, color: color, size: 19),
-              const SizedBox(width: 8),
-              Expanded(
-                child: Text(
-                  job.title ?? job.fileName,
-                  style: const TextStyle(
-                    fontWeight: FontWeight.w700,
-                    fontSize: 13.5,
-                  ),
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                ),
-              ),
-              StatusPill(label: label, color: color),
-            ],
-          ),
-          if (job.status == DownloadStatus.running) ...[
-            const SizedBox(height: 12),
-            ClipRRect(
-              borderRadius: BorderRadius.circular(6),
-              child: LinearProgressIndicator(
-                value: job.progress <= 0 ? null : job.progress,
-                minHeight: 6,
-                backgroundColor: AppColors.stroke,
-                valueColor: const AlwaysStoppedAnimation(AppColors.primary),
-              ),
-            ),
-            const SizedBox(height: 6),
-            Text(
-              '${(job.progress * 100).clamp(0, 100).toStringAsFixed(0)} %',
-              style: const TextStyle(fontSize: 11, color: AppColors.textMuted),
-            ),
-          ],
-          const SizedBox(height: 8),
-          Text(
-            job.url,
-            style: const TextStyle(fontSize: 10.5, color: AppColors.textMuted),
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
-          ),
-          if (job.status == DownloadStatus.done) ...[
-            const SizedBox(height: 12),
+    return FTheme(
+      data: FTheme.neutral.dark.touch,
+      child: GlassCard(
+        key: Key('job-${job.fileName}'),
+        accent: job.status == DownloadStatus.done
+            ? AppColors.tertiary
+            : job.status == DownloadStatus.failed
+                ? AppColors.error
+                : null,
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
             Row(
               children: [
-                FilledButton.tonalIcon(
-                  onPressed: () => Share.shareXFiles(
-                    [XFile(job.outputPath)],
-                    subject: job.fileName,
-                  ),
-                  icon: const Icon(Icons.ios_share, size: 16),
-                  label: const Text('Поделиться'),
-                ),
+                Icon(icon, color: color, size: 19),
                 const SizedBox(width: 8),
-                OutlinedButton.icon(
-                  onPressed: () => showAudioCheck(context, job),
-                  icon: const Icon(Icons.graphic_eq, size: 16),
-                  label: const Text('Проверить звук'),
+                Expanded(
+                  child: Text(
+                    job.title ?? job.fileName,
+                    style: const TextStyle(
+                      fontWeight: FontWeight.w700,
+                      fontSize: 13.5,
+                    ),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                ),
+                FBadge(
+                  variant: switch (job.status) {
+                    DownloadStatus.queued => FBadgeVariant.outline,
+                    DownloadStatus.running => FBadgeVariant.secondary,
+                    DownloadStatus.done => FBadgeVariant.primary,
+                    DownloadStatus.failed => FBadgeVariant.destructive,
+                    DownloadStatus.cancelled => FBadgeVariant.outline,
+                  },
+                  child: Text(label),
                 ),
               ],
             ),
-          ],
-          if (job.status == DownloadStatus.failed) ...[
-            const SizedBox(height: 10),
-            // Material нужен, чтобы ink-эффекты ListTile не прятались
-            // за полупрозрачной подложкой GlassCard.
-            Material(
-              color: Colors.transparent,
-              child: Theme(
-                data: Theme.of(context)
-                    .copyWith(dividerColor: Colors.transparent),
-                child: ExpansionTile(
-                  tilePadding: EdgeInsets.zero,
-                  childrenPadding: EdgeInsets.zero,
-                  title: const Text('Лог ffmpeg',
-                      style: TextStyle(fontSize: 12.5)),
+            if (job.status == DownloadStatus.running) ...[
+              const SizedBox(height: 12),
+              ClipRRect(
+                borderRadius: BorderRadius.circular(6),
+                child: LinearProgressIndicator(
+                  value: job.progress <= 0 ? null : job.progress,
+                  minHeight: 6,
+                  backgroundColor: AppColors.stroke,
+                  valueColor: const AlwaysStoppedAnimation(AppColors.primary),
+                ),
+              ),
+              const SizedBox(height: 6),
+              Text(
+                '${(job.progress * 100).clamp(0, 100).toStringAsFixed(0)} %',
+                style:
+                    const TextStyle(fontSize: 11, color: AppColors.textMuted),
+              ),
+            ],
+            if (job.isActive) ...[
+              const SizedBox(height: 10),
+              FButton(
+                key: Key('cancel-${job.fileName}'),
+                onPress: () => _cancel(context),
+                variant: FButtonVariant.outline,
+                size: FButtonSizeVariant.xs,
+                child: const Row(
+                  mainAxisSize: MainAxisSize.min,
                   children: [
-                    MonoBlock(text: job.log, maxHeight: 180, dense: true)
+                    Icon(Icons.close, size: 14),
+                    SizedBox(width: 6),
+                    Text('Отменить'),
                   ],
                 ),
               ),
+            ],
+            const SizedBox(height: 8),
+            Text(
+              job.url,
+              style:
+                  const TextStyle(fontSize: 10.5, color: AppColors.textMuted),
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
             ),
+            if (job.status == DownloadStatus.done) ...[
+              const SizedBox(height: 12),
+              Row(
+                children: [
+                  FilledButton.tonalIcon(
+                    onPressed: () => Share.shareXFiles(
+                      [XFile(job.outputPath)],
+                      subject: job.fileName,
+                    ),
+                    icon: const Icon(Icons.ios_share, size: 16),
+                    label: const Text('Поделиться'),
+                  ),
+                  const SizedBox(width: 8),
+                  OutlinedButton.icon(
+                    onPressed: () => showAudioCheck(context, job),
+                    icon: const Icon(Icons.graphic_eq, size: 16),
+                    label: const Text('Проверить звук'),
+                  ),
+                ],
+              ),
+            ],
+            if (job.status == DownloadStatus.failed) ...[
+              const SizedBox(height: 10),
+              // Material нужен, чтобы ink-эффекты ListTile не прятались
+              // за полупрозрачной подложкой GlassCard.
+              Material(
+                color: Colors.transparent,
+                child: Theme(
+                  data: Theme.of(context)
+                      .copyWith(dividerColor: Colors.transparent),
+                  child: ExpansionTile(
+                    tilePadding: EdgeInsets.zero,
+                    childrenPadding: EdgeInsets.zero,
+                    title: const Text('Лог ffmpeg',
+                        style: TextStyle(fontSize: 12.5)),
+                    children: [
+                      MonoBlock(text: job.log, maxHeight: 180, dense: true)
+                    ],
+                  ),
+                ),
+              ),
+            ],
           ],
-        ],
+        ),
       ),
     );
+  }
+
+  /// Мгновенно помечает задачу отменённой; в нативном сценарии финальный
+  /// статус всё равно придёт колбэком завершения ffmpeg — повторный
+  /// upsert с тем же статусом безвреден.
+  Future<void> _cancel(BuildContext context) async {
+    final deps = AppDependencies.of(context);
+    final requested = await deps.downloadService.cancel(job);
+    if (requested) {
+      job.status = DownloadStatus.cancelled;
+      deps.appState.upsert(job);
+    }
   }
 
   /// Проверка результата: ffprobe показывает, есть ли аудио.

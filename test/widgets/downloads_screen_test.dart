@@ -165,4 +165,27 @@ void main() {
 
     expect(find.textContaining('403'), findsOneWidget);
   });
+
+  testWidgets('активную задачу можно отменить', (tester) async {
+    final dir = Directory.systemTemp.createTempSync('dl_cancel');
+    final state = AppState();
+    state.upsert(
+      _job('/run.mp4', DownloadStatus.running, title: 'Фильм', progress: 0.3),
+    );
+
+    final engine = FakeDownloadEngine(dir: dir);
+    await tester.pumpWidget(
+      _wrap(buildTestDependencies(state: state, engine: engine, dir: dir)),
+    );
+    await tester.pump();
+
+    expect(find.text('Отменить'), findsOneWidget);
+    await tester.tap(find.text('Отменить'));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 100));
+
+    expect(engine.cancelled.length, 1);
+    expect(state.jobs.single.status, DownloadStatus.cancelled);
+    expect(find.text('Отменено'), findsOneWidget);
+  });
 }
