@@ -1,0 +1,37 @@
+name: PR check
+
+# Быстрая проверка на каждый pull request: формат, анализатор, тесты.
+
+on:
+  pull_request:
+    branches: [master, dev]
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.50.0'
+          channel: stable
+          cache: true
+
+      - run: flutter pub get
+
+      - name: Форматирование
+        run: dart format --output=none --set-exit-if-changed lib test
+
+      - name: Анализатор
+        run: flutter analyze --no-fatal-infos
+
+      - name: Тесты с покрытием
+        run: flutter test --coverage
+
+      - name: Артефакт покрытия
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage
+          path: coverage/lcov.info
+          if-no-files-found: ignore

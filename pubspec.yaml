@@ -1,0 +1,36 @@
+name: rezak
+description: "Мобильный клиент для поиска встраиваемых плееров через API iframe.cloud и скачивания HLS/DASH-потоков вместе с аудиодорожкой."
+publish_to: "none"
+version: 1.0.0+1
+
+environment:
+  sdk: ">=3.4.0 <4.0.0"
+  flutter: ">=3.27.0"
+
+dependencies:
+  flutter:
+    sdk: flutter
+
+  cupertino_icons: ^1.0.8
+
+  # HTTP-слой: API плееров + разбор master-плейлиста
+  dio: ^5.7.0
+
+  # WebView со сниффером сетевых запросов
+  flutter_inappwebview: ^6.2.0-beta.3
+
+  # ffmpeg/ffprobe на устройстве (поддерживаемый форк вышедшего на пенсию ffmpeg-kit)
+  ffmpeg_kit_flutter_new: ^4.6.8
+
+  # Пути и шаринг готового файла
+  path_provider: ^2.1.5
+  share_plus: ^10.1.4
+  material_ui: ^1.11.0
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^5.0.0
+
+flutter:
+  uses-material-design: true

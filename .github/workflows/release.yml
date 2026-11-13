@@ -1,0 +1,177 @@
+name: Release APK (arm64 + armv7)
+
+# Собираем два релизных APK: под arm64-v8a (современные устройства)
+# и armeabi-v7a (32-битные), плюс прогоняем анализ и все тесты.
+#
+# Как это работает:
+#   * push в main/master        → тесты + сборка, APK в артефакты workflow
+#   * тег v* (например v1.0.0)  → тесты + сборка, APK сразу в GitHub Release
+#     (артефакты не используются, чтобы не расходовать квоту хранилища)
+#   * pull_request              → только тесты и анализатор
+#   * workflow_dispatch         → ручной запуск, можно задать версию
+
+on:
+  push:
+    branches: [master, dev]
+    tags: ['v*']
+  pull_request:
+    branches: [master, dev]
+  workflow_dispatch:
+    inputs:
+      build_name:
+        description: 'Версия (versionName), например 1.0.1'
+        required: false
+        default: '1.0.0'
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  FLUTTER_VERSION: '3.50.0'
+  JAVA_VERSION: '17'
+
+jobs:
+  # ------------------------------------------------------------------
+  # 1. Качество кода: анализатор + все тесты (юнит и widget)
+  # ------------------------------------------------------------------
+  test:
+    name: Analyze & test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          channel: stable
+          cache: true
+
+      - name: Установка зависимостей
+        run: flutter pub get
+
+      - name: Анализатор
+        # Информационные предупреждения не валят сборку, ошибки — валят.
+        run: flutter analyze --no-fatal-infos
+
+      - name: Тесты
+        run: flutter test --reporter expanded
+
+  # ------------------------------------------------------------------
+  # 2. Матрица сборки: одна задача на каждую архитектуру
+  # ------------------------------------------------------------------
+  build-apk:
+    name: APK ${{ matrix.abi }}
+    needs: test
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - abi: arm64-v8a
+            target-platform: android-arm64
+          - abi: armeabi-v7a
+            target-platform: android-arm
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: ${{ env.JAVA_VERSION }}
+
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          channel: stable
+          cache: true
+
+      - name: Зависимости
+        run: flutter pub get
+
+      # Необязательная подпись: если в секретах лежит keystore в base64,
+      # подписываем им; иначе Flutter использует debug-ключ.
+      - name: Подготовка keystore (если задан)
+        if: ${{ env.KEYSTORE_BASE64 != '' }}
+        env:
+          KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
+          KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
+        run: |
+          echo "$KEYSTORE_BASE64" | base64 -d > android/app/upload-keystore.jks
+          cat >> android/key.properties <<EOF
+          storeFile=upload-keystore.jks
+          storePassword=$KEYSTORE_PASSWORD
+          keyAlias=$KEY_ALIAS
+          keyPassword=$KEY_PASSWORD
+          EOF
+
+      - name: Версии инструментов
+        run: |
+          java -version
+          flutter --version
+          grep -E 'distributionUrl' android/gradle/wrapper/gradle-wrapper.properties || true
+          grep -E 'com.android.application' android/settings.gradle.kts || true
+
+      - name: Сборка release APK (${{ matrix.abi }})
+        run: |
+          flutter build apk \
+            --release \
+            --target-platform ${{ matrix.target-platform }} \
+            --build-name ${{ inputs.build_name || '1.0.0' }} \
+            --build-number ${{ github.run_number }}
+
+      # Переименовываем артефакт под ABI и заодно проверяем,
+      # что внутри APK действительно ровно одна архитектура.
+      - name: Переименование и проверка ABI
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+          APK=$(ls build/app/outputs/flutter-apk/*.apk | head -n 1)
+          echo "Исходный APK: $APK"
+
+          echo "ABI внутри APK:"
+          ABIS=$(unzip -l "$APK" | grep -oE 'lib/[^/]+/' | cut -d/ -f2 | sort -u)
+          echo "$ABIS"
+          if [ "$(echo "$ABIS" | wc -l)" -ne 1 ]; then
+            echo "Ожидалась ровно одна архитектура, получили: $ABIS" >&2
+            exit 1
+          fi
+          if [ "$ABIS" != "${{ matrix.abi }}" ]; then
+            echo "Ожидалась ${{ matrix.abi }}, а в APK: $ABIS" >&2
+            exit 1
+          fi
+
+          cp "$APK" "dist/rezak-${{ matrix.abi }}-v${{ inputs.build_name || '1.0.0' }}.apk"
+          ls -la dist
+
+      # На тег — сразу прикрепляем APK к релизу (не тратит квоту артефактов).
+      - name: Прикрепить к GitHub Release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          name: Rezak ${{ github.ref_name }}
+          draft: false
+          generate_release_notes: true
+          fail_on_unmatched_files: true
+          files: dist/*.apk
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      # На обычный push — артефакт workflow.
+      # continue-on-error: исчерпанная квота хранилища не должна «валить» сборку,
+      # сами APK при этом успешно собраны и проверены.
+      - name: Загрузка артефакта
+        if: ${{ !startsWith(github.ref, 'refs/tags/v') }}
+        continue-on-error: true
+        uses: actions/upload-artifact@v4
+        with:
+          name: rezak-${{ matrix.abi }}
+          path: dist/*.apk
+          if-no-files-found: error
+          retention-days: 14
