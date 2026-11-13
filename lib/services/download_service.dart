@@ -1,7 +1,8 @@
+import 'dart:async';
 import 'dart:io';
 
 import 'package:ffmpeg_kit_flutter_new/ffmpeg_kit.dart';
-import 'package:ffmpeg_kit_flutter_new/ffmpeg_kit_config.dart';
+import 'package:ffmpeg_kit_flutter_new/ffprobe_kit.dart';
 import 'package:ffmpeg_kit_flutter_new/return_code.dart';
 import 'package:path_provider/path_provider.dart';
 
@@ -90,6 +91,14 @@ abstract class DownloadEngine {
     void Function(DownloadJob job)? onUpdate,
   });
 
+  /// Пытается прервать активную задачу. Возвращает true, если отменить
+  /// получилось (нативная сессия найдена); финальный статус `cancelled`
+  /// всё равно придёт колбэком завершения ffmpeg.
+  Future<bool> cancel(DownloadJob job);
+
+  /// Аргументы проверки потока через ffprobe (см. [DownloadService]).
+  List<String> buildProbeArguments(String path);
+
   Future<String> probeAudio(String path);
 }
 
@@ -115,6 +124,10 @@ class DownloadService implements DownloadEngine {
   final Future<String> Function(String path)? _probeRunner;
 
   int _running = 0;
+
+  /// Идущие нативные сессии: outputPath → sessionId. Нужен для отмены:
+  /// ffmpeg-kit отменяет только по id сессии.
+  final Map<String, int> _sessions = {};
 
   @override
   Future<Directory> outputDir() async {
@@ -236,7 +249,7 @@ class DownloadService implements DownloadEngine {
         job.status = DownloadStatus.done;
         job.progress = 1;
         job.log = 'Готово: $outPath '
-            '(${_humanSize(await file.length())})\n$output';
+            '(${humanSize(await file.length())})\n$output';
       } else {
         job.status = DownloadStatus.failed;
         job.log = 'ffmpeg отчитался об успехе, но файла нет: $outPath';
@@ -258,36 +271,81 @@ class DownloadService implements DownloadEngine {
     DownloadJob job,
     void Function(DownloadJob)? onUpdate,
   ) async {
-    FFmpegKitConfig.enableStatisticsCallback((stats) {
-      final timeMs = stats.getTime();
-      if (timeMs > 0) {
-        // Точную длительность без ffprobe не знаем — показываем оценочный рост.
-        job.progress = (timeMs / (1000 * 60 * 120)).clamp(0.0, 0.99);
-        onUpdate?.call(job);
-      }
-    });
+    final completer = Completer<FfmpegRunResult>();
 
-    final session = await FFmpegKit.executeWithArguments(args);
-    final returnCode = await session.getReturnCode();
-    final output = await session.getAllLogsAsString() ?? '';
-
-    return FfmpegRunResult(
-      success: ReturnCode.isSuccess(returnCode),
-      cancelled: ReturnCode.isCancel(returnCode),
-      output: output,
-      exitCode: returnCode?.getValue(),
+    // Колбэк статистики подписываем НА КОНКРЕТНУЮ сессию. Прежний глобальный
+    // FFmpegKitConfig.enableStatisticsCallback был один на весь процесс:
+    // при maxConcurrent > 1 параллельные задачи писали прогресс друг другу.
+    final session = await FFmpegKit.executeWithArgumentsAsync(
+      args,
+      (doneSession) async {
+        try {
+          final returnCode = await doneSession.getReturnCode();
+          final output = await doneSession.getAllLogsAsString() ?? '';
+          completer.complete(FfmpegRunResult(
+            success: ReturnCode.isSuccess(returnCode),
+            cancelled: ReturnCode.isCancel(returnCode),
+            output: output,
+            exitCode: returnCode?.getValue(),
+          ));
+        } catch (error) {
+          completer.completeError(error);
+        }
+      },
+      null,
+      (stats) {
+        final timeMs = stats.getTime();
+        if (timeMs > 0) {
+          // Точную длительность без ffprobe не знаем — показываем оценочный рост.
+          job.progress = (timeMs / (1000 * 60 * 120)).clamp(0.0, 0.99);
+          onUpdate?.call(job);
+        }
+      },
     );
+
+    final sessionId = session.getSessionId();
+    if (sessionId != null) {
+      _sessions[job.outputPath] = sessionId;
+    }
+
+    try {
+      return await completer.future;
+    } finally {
+      _sessions.remove(job.outputPath);
+    }
   }
+
+  @override
+  Future<bool> cancel(DownloadJob job) async {
+    if (_runner != null) return false; // подменённый раннер сессий не создаёт
+    final sessionId = _sessions[job.outputPath];
+    if (sessionId == null) return false;
+    await FFmpegKit.cancel(sessionId);
+    return true;
+  }
+
+  /// Аргументы проверки потока. Ключевое: `-show_entries` и `-of` понимает
+  /// только ffprobe — у ffmpeg таких флагов нет, и раньше эта команда
+  /// отдавалась FFmpegKit.execute и всегда падала с «Unrecognized option».
+  @override
+  List<String> buildProbeArguments(String path) => [
+        '-hide_banner',
+        '-i',
+        path,
+        '-show_entries',
+        'stream=codec_type,codec_name',
+        '-of',
+        'csv=p=0',
+      ];
 
   @override
   Future<String> probeAudio(String path) async {
     final custom = _probeRunner;
     if (custom != null) return custom(path);
-    final session = await FFmpegKit.execute(
-      '-hide_banner -i "$path" -show_entries stream=codec_type,codec_name '
-      '-of csv=p=0',
-    );
-    return (await session.getOutput() ?? '').trim();
+    final session =
+        await FFprobeKit.executeWithArguments(buildProbeArguments(path));
+    final output = await session.getOutput();
+    return (output ?? await session.getAllLogsAsString() ?? '').trim();
   }
 
   String _explainFailure(String log, int? code) {
@@ -304,17 +362,6 @@ class DownloadService implements DownloadEngine {
           'Снимите ссылку именно с master.m3u8.\n\n$log';
     }
     return 'ffmpeg завершился с кодом $code.\n\n$log';
-  }
-
-  String _humanSize(int bytes) {
-    const units = ['Б', 'КБ', 'МБ', 'ГБ'];
-    var size = bytes.toDouble();
-    var unit = 0;
-    while (size >= 1024 && unit < units.length - 1) {
-      size /= 1024;
-      unit++;
-    }
-    return '${size.toStringAsFixed(1)} ${units[unit]}';
   }
 }
 

@@ -71,6 +71,7 @@ class FakeDownloadEngine implements DownloadEngine {
   final List<List<String>> builtArguments = [];
   final List<DownloadJob> started = [];
   final List<String> probed = [];
+  final List<DownloadJob> cancelled = [];
 
   @override
   Future<Directory> outputDir() async => dir;
@@ -126,6 +127,23 @@ class FakeDownloadEngine implements DownloadEngine {
   Future<String> probeAudio(String path) async {
     probed.add(path);
     return probeOutput;
+  }
+
+  @override
+  List<String> buildProbeArguments(String path) => [
+        '-hide_banner',
+        '-i',
+        path,
+        '-show_entries',
+        'stream=codec_type,codec_name',
+        '-of',
+        'csv=p=0',
+      ];
+
+  @override
+  Future<bool> cancel(DownloadJob job) async {
+    cancelled.add(job);
+    return true;
   }
 }
 
