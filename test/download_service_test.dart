@@ -258,4 +258,40 @@ void main() {
     expect(humanSize(2048), '2.0 КБ');
     expect(humanSize(5 * 1024 * 1024), '5.0 МБ');
   });
+
+  group('buildProbeArguments', () {
+    test('аргументы именно ffprobe: путь отдельным аргументом, без кавычек',
+        () {
+      final service = DownloadService(dirProvider: () async => tmp);
+      final args = service.buildProbeArguments('/tmp/x.mp4');
+
+      expect(args, containsAllInOrder(['-i', '/tmp/x.mp4']));
+      expect(
+        args,
+        containsAllInOrder(['-show_entries', 'stream=codec_type,codec_name']),
+      );
+      expect(args, containsAllInOrder(['-of', 'csv=p=0']));
+      // Путь не склеен с кавычками в одну строку — пробелы в имени файла
+      // не сломают разбор аргументов.
+      expect(args.where((a) => a.contains(' ')), isEmpty);
+    });
+  });
+
+  group('cancel', () {
+    test('без активной сессии отменять нечего', () async {
+      final service = DownloadService(dirProvider: () async => tmp);
+      final job = DownloadJob(url: 'u', outputPath: '/tmp/x.mp4');
+      expect(await service.cancel(job), isFalse);
+    });
+
+    test('с подменённым раннером нативной сессии нет', () async {
+      final service = DownloadService(
+        dirProvider: () async => tmp,
+        runner: (args) async =>
+            const FfmpegRunResult(success: true, output: ''),
+      );
+      final job = DownloadJob(url: 'u', outputPath: '/tmp/x.mp4');
+      expect(await service.cancel(job), isFalse);
+    });
+  });
 }
