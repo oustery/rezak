@@ -132,18 +132,20 @@ jobs:
             echo "Release-подпись: keystore из секретов репозитория"
           else
             echo "SIGN_MODE=generated" >> "$GITHUB_ENV"
-            STORE_PASS=$(openssl rand -hex 24)
-            KEY_PASS=$(openssl rand -hex 24)
+            # PKCS12 (формат keytool по умолчанию с JDK 9) поддерживает только
+            # один пароль: у ключа и хранилища он обязан совпадать, иначе
+            # Gradle не расшифрует приватный ключ (см. CHANGELOG 1.1.0).
+            RELEASE_PASS=$(openssl rand -hex 24)
             keytool -genkeypair -v \
               -keystore android/app/rezak-release.jks \
               -alias rezak-release -keyalg RSA -keysize 2048 -validity 10000 \
-              -storepass "$STORE_PASS" -keypass "$KEY_PASS" \
+              -storepass "$RELEASE_PASS" -keypass "$RELEASE_PASS" \
               -dname "CN=Rezak Release, OU=Oustery, O=Oustery, C=RU"
             printf '%s\n' \
               "storeFile=rezak-release.jks" \
-              "storePassword=$STORE_PASS" \
+              "storePassword=$RELEASE_PASS" \
               "keyAlias=rezak-release" \
-              "keyPassword=$KEY_PASS" \
+              "keyPassword=$RELEASE_PASS" \
               > android/key.properties
             echo "Release-подпись: сгенерированный release-ключ (живёт только в рамках сборки)"
           fi
