@@ -7,7 +7,9 @@
 
 ### Изменено
 
-- **Release-APK легче примерно на треть.** Три оптимизации:
+- **Release-APK легче на 42–47%** (замеры CI: arm64 63,9 → 37,1 МБ;
+  armeabi-v7a 97,9 → 51,5 МБ; debug-варианты — 141,7 → 118,2 и
+  157,7 → 114,8 МБ). Три оптимизации:
   - ffmpeg-кит заменён с full-gpl на вариант **https**
     (`ffmpeg_kit_flutter_new_https` вместо `ffmpeg_kit_flutter_new`).
     Приложению нужен только ремюкс `-c copy` и ffprobe — GPL-кодеки
