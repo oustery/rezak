@@ -123,12 +123,12 @@ jobs:
           if [ -n "$KEYSTORE_BASE64" ]; then
             echo "SIGN_MODE=secrets" >> "$GITHUB_ENV"
             echo "$KEYSTORE_BASE64" | base64 -d > android/app/upload-keystore.jks
-            cat > android/key.properties <<EOF
-            storeFile=upload-keystore.jks
-            storePassword=$KEYSTORE_PASSWORD
-            keyAlias=$KEY_ALIAS
-            keyPassword=$KEY_PASSWORD
-            EOF
+            printf '%s\n' \
+              "storeFile=upload-keystore.jks" \
+              "storePassword=$KEYSTORE_PASSWORD" \
+              "keyAlias=$KEY_ALIAS" \
+              "keyPassword=$KEY_PASSWORD" \
+              > android/key.properties
             echo "Release-подпись: keystore из секретов репозитория"
           else
             echo "SIGN_MODE=generated" >> "$GITHUB_ENV"
@@ -139,12 +139,12 @@ jobs:
               -alias rezak-release -keyalg RSA -keysize 2048 -validity 10000 \
               -storepass "$STORE_PASS" -keypass "$KEY_PASS" \
               -dname "CN=Rezak Release, OU=Oustery, O=Oustery, C=RU"
-            cat > android/key.properties <<EOF
-            storeFile=rezak-release.jks
-            storePassword=$STORE_PASS
-            keyAlias=rezak-release
-            keyPassword=$KEY_PASS
-            EOF
+            printf '%s\n' \
+              "storeFile=rezak-release.jks" \
+              "storePassword=$STORE_PASS" \
+              "keyAlias=rezak-release" \
+              "keyPassword=$KEY_PASS" \
+              > android/key.properties
             echo "Release-подпись: сгенерированный release-ключ (живёт только в рамках сборки)"
           fi
 
