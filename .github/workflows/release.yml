@@ -1,13 +1,16 @@
-name: Release APK (arm64 + armv7)
+name: Release APK (release + debug, arm64 + armv7)
 
-# Собираем два релизных APK: под arm64-v8a (современные устройства)
-# и armeabi-v7a (32-битные), плюс прогоняем анализ и все тесты.
+# После компиляции автоматически выпускаем ДВА варианта на каждую
+# архитектуру — всего четыре APK:
+#   * release — выделенная release-подпись: ключ из секретов репозитория
+#     (KEYSTORE_*) либо сгенерированный keytool'ом на время сборки;
+#   * debug   — стандартный Android debug-ключ (для тестов).
 #
 # Как это работает:
-#   * push в master/dev         → тесты + сборка, APK в артефакты workflow
-#   * тег v* (например v1.0.0)  → тесты + сборка, APK сразу в GitHub Release
-#     (артефакты не используются, чтобы не расходовать квоту хранилища)
-#   * pull_request              → только тесты и анализатор
+#   * push в master/dev         → тесты + сборка, 4 APK в артефакты workflow
+#   * тег v* (например v1.1.0)  → тесты + сборка, APK сразу в GitHub Release,
+#     versionName берётся из тега (v1.1.0 → 1.1.0)
+#   * pull_request              → тесты, анализатор и сборка всех вариантов
 #   * workflow_dispatch         → ручной запуск, можно задать версию
 
 on:
@@ -33,10 +36,6 @@ concurrency:
 env:
   FLUTTER_VERSION: '3.50.0'
   JAVA_VERSION: '17'
-  # Секреты нельзя прочитать в `if` шага: env-контекст шага не видит
-  # собственные secrets-переменные, поэтому раньше условие всегда было false
-  # и релиз молча подписывался debug-ключом. Вычисляем флаг на workflow-уровне.
-  KEYSTORE_SET: ${{ secrets.KEYSTORE_BASE64 != '' }}
 
 jobs:
   # ------------------------------------------------------------------
@@ -97,23 +96,71 @@ jobs:
       - name: Зависимости
         run: flutter pub get
 
-      # Необязательная подпись: если в секретах лежит keystore в base64,
-      # подписываем им; иначе Flutter использует debug-ключ.
-      - name: Подготовка keystore (если задан)
-        if: ${{ env.KEYSTORE_SET == 'true' }}
+      # Версия: из тега (v1.1.0 → 1.1.0), из input при ручном запуске,
+      # иначе дефолт. Раньше сборка на тегах всегда шла с --build-name 1.0.0.
+      - name: Определение версии
+        run: |
+          if [ "${{ github.ref_type }}" = "tag" ]; then
+            VER="${GITHUB_REF_NAME#v}"
+          elif [ -n "${{ inputs.build_name }}" ]; then
+            VER="${{ inputs.build_name }}"
+          else
+            VER="1.0.0"
+          fi
+          echo "Версия сборки: $VER"
+          echo "BUILD_VERSION=$VER" >> "$GITHUB_ENV"
+
+      # Release-подпись. Секреты недоступны в `if` шага из его собственного
+      # env-контекста, поэтому ветвление делаем внутри скрипта.
+      - name: Release-подпись (из секретов или сгенерированная)
         env:
           KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
           KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
           KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
           KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
         run: |
-          echo "$KEYSTORE_BASE64" | base64 -d > android/app/upload-keystore.jks
-          cat >> android/key.properties <<EOF
-          storeFile=upload-keystore.jks
-          storePassword=$KEYSTORE_PASSWORD
-          keyAlias=$KEY_ALIAS
-          keyPassword=$KEY_PASSWORD
-          EOF
+          set -euo pipefail
+          if [ -n "$KEYSTORE_BASE64" ]; then
+            echo "SIGN_MODE=secrets" >> "$GITHUB_ENV"
+            echo "$KEYSTORE_BASE64" | base64 -d > android/app/upload-keystore.jks
+            cat > android/key.properties <<EOF
+            storeFile=upload-keystore.jks
+            storePassword=$KEYSTORE_PASSWORD
+            keyAlias=$KEY_ALIAS
+            keyPassword=$KEY_PASSWORD
+            EOF
+            echo "Release-подпись: keystore из секретов репозитория"
+          else
+            echo "SIGN_MODE=generated" >> "$GITHUB_ENV"
+            STORE_PASS=$(openssl rand -hex 24)
+            KEY_PASS=$(openssl rand -hex 24)
+            keytool -genkeypair -v \
+              -keystore android/app/rezak-release.jks \
+              -alias rezak-release -keyalg RSA -keysize 2048 -validity 10000 \
+              -storepass "$STORE_PASS" -keypass "$KEY_PASS" \
+              -dname "CN=Rezak Release, OU=Oustery, O=Oustery, C=RU"
+            cat > android/key.properties <<EOF
+            storeFile=rezak-release.jks
+            storePassword=$STORE_PASS
+            keyAlias=rezak-release
+            keyPassword=$KEY_PASS
+            EOF
+            echo "Release-подпись: сгенерированный release-ключ (живёт только в рамках сборки)"
+          fi
+
+      # Debug-вариант подписывается стандартным Android debug-ключом
+      # (тот же, что Flutter/Gradle генерируют локально при первой сборке).
+      - name: Debug-подпись (стандартный Android debug-ключ)
+        run: |
+          set -euo pipefail
+          mkdir -p "$HOME/.android"
+          if [ ! -f "$HOME/.android/debug.keystore" ]; then
+            keytool -genkeypair -v \
+              -keystore "$HOME/.android/debug.keystore" \
+              -alias androiddebugkey -keyalg RSA -keysize 2048 -validity 10000 \
+              -storepass android -keypass android \
+              -dname "CN=Android Debug,O=Android,C=US"
+          fi
 
       - name: Версии инструментов
         run: |
@@ -127,32 +174,64 @@ jobs:
           flutter build apk \
             --release \
             --target-platform ${{ matrix.target-platform }} \
-            --build-name ${{ inputs.build_name || '1.0.0' }} \
+            --build-name ${{ env.BUILD_VERSION }} \
             --build-number ${{ github.run_number }}
 
-      # Переименовываем артефакт под ABI и заодно проверяем,
-      # что внутри APK действительно ровно одна архитектура.
-      - name: Переименование и проверка ABI
+      - name: Сборка debug APK (${{ matrix.abi }})
+        run: |
+          flutter build apk \
+            --debug \
+            --target-platform ${{ matrix.target-platform }} \
+            --build-name ${{ env.BUILD_VERSION }} \
+            --build-number ${{ github.run_number }}
+
+      # Переименовываем оба APK под ABI и проверяем, что внутри каждого
+      # ровно одна архитектура — именно ожидаемая.
+      - name: Переименование и проверка ABI (release + debug)
         run: |
           set -euo pipefail
           mkdir -p dist
-          APK=$(ls build/app/outputs/flutter-apk/*.apk | head -n 1)
-          echo "Исходный APK: $APK"
+          ABI="${{ matrix.abi }}"
+          VER="${{ env.BUILD_VERSION }}"
 
-          echo "ABI внутри APK:"
-          ABIS=$(unzip -l "$APK" | grep -oE 'lib/[^/]+/' | cut -d/ -f2 | sort -u)
-          echo "$ABIS"
-          if [ "$(echo "$ABIS" | wc -l)" -ne 1 ]; then
-            echo "Ожидалась ровно одна архитектура, получили: $ABIS" >&2
-            exit 1
-          fi
-          if [ "$ABIS" != "${{ matrix.abi }}" ]; then
-            echo "Ожидалась ${{ matrix.abi }}, а в APK: $ABIS" >&2
-            exit 1
-          fi
-
-          cp "$APK" "dist/rezak-${{ matrix.abi }}-v${{ inputs.build_name || '1.0.0' }}.apk"
+          for kind in release debug; do
+            APK="build/app/outputs/flutter-apk/app-$kind.apk"
+            [ -f "$APK" ] || { echo "Не найден $APK" >&2; exit 1; }
+            echo "=== $kind: $APK"
+            ABIS=$(unzip -l "$APK" | grep -oE 'lib/[^/]+/' | cut -d/ -f2 | sort -u)
+            echo "$ABIS"
+            if [ "$(echo "$ABIS" | wc -l)" -ne 1 ]; then
+              echo "Ожидалась ровно одна архитектура, получили: $ABIS" >&2
+              exit 1
+            fi
+            if [ "$ABIS" != "$ABI" ]; then
+              echo "Ожидалась $ABI, а в APK: $ABIS" >&2
+              exit 1
+            fi
+            if [ "$kind" = "release" ]; then
+              cp "$APK" "dist/rezak-$ABI-v$VER.apk"
+            else
+              cp "$APK" "dist/rezak-$ABI-v$VER-debug.apk"
+            fi
+          done
           ls -la dist
+
+      # Контроль подписей: release-APK обязан быть подписан НЕ debug-ключом.
+      - name: Проверка подписей
+        run: |
+          set -euo pipefail
+          ABI="${{ matrix.abi }}"
+          VER="${{ env.BUILD_VERSION }}"
+          REL="dist/rezak-$ABI-v$VER.apk"
+          DBG="dist/rezak-$ABI-v$VER-debug.apk"
+          echo "=== Release APK (режим: ${{ env.SIGN_MODE }}):"
+          keytool -printcert -jarfile "$REL" | head -3
+          echo "=== Debug APK:"
+          keytool -printcert -jarfile "$DBG" | head -3
+          if keytool -printcert -jarfile "$REL" | grep -q 'CN=Android Debug'; then
+            echo "Release APK подписан debug-ключом — это ошибка конфигурации" >&2
+            exit 1
+          fi
 
       # На тег — сразу прикрепляем APK к релизу (не тратит квоту артефактов).
       - name: Прикрепить к GitHub Release
