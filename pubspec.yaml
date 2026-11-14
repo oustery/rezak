@@ -1,7 +1,7 @@
 name: rezak
 description: "Мобильный клиент для поиска встраиваемых плееров через API iframe.cloud и скачивания HLS/DASH-потоков вместе с аудиодорожкой."
 publish_to: "none"
-version: 1.1.0+2
+version: 1.2.0+3
 
 environment:
   sdk: ">=3.4.0 <4.0.0"
@@ -19,8 +19,12 @@ dependencies:
   # WebView со сниффером сетевых запросов
   flutter_inappwebview: ^6.2.0-beta.3
 
-  # ffmpeg/ffprobe на устройстве (поддерживаемый форк вышедшего на пенсию ffmpeg-kit)
-  ffmpeg_kit_flutter_new: ^4.6.8
+  # ffmpeg/ffprobe на устройстве (поддерживаемый форк вышедшего на пенсию
+  # ffmpeg-kit). Вариант https = минимальная сборка + gnutls (TLS для
+  # https-плейлистов): приложению нужен только ремюкс (-c copy) и ffprobe,
+  # GPL-кодеки (x264/x265) и тяжёлые внешние библиотеки не используются —
+  # это снимает ~30% размера APK относительно базового (full-gpl) пакета.
+  ffmpeg_kit_flutter_new_https: ^2.6.8
 
   # Пути и шаринг готового файла
   path_provider: ^2.1.5

@@ -173,11 +173,16 @@ jobs:
 
       - name: Сборка release APK (${{ matrix.abi }})
         run: |
+          # --obfuscate + --split-debug-info: Dart-символы выносятся из
+          # libapp.so в отдельные .symbols — libapp.so меньше, стектрейсы
+          # release-сборки расшифровываются по артефакту symbols.
           flutter build apk \
             --release \
             --target-platform ${{ matrix.target-platform }} \
             --build-name ${{ env.BUILD_VERSION }} \
-            --build-number ${{ github.run_number }}
+            --build-number ${{ github.run_number }} \
+            --obfuscate \
+            --split-debug-info=build/app/outputs/symbols
 
       - name: Сборка debug APK (${{ matrix.abi }})
         run: |
@@ -234,6 +239,17 @@ jobs:
             echo "Release APK подписан debug-ключом — это ошибка конфигурации" >&2
             exit 1
           fi
+
+      # Symbols обфусцированной Dart-сборки: нужны для расшифровки
+      # стектрейсов release-версии (flutter symbolize). Небольшие, кладём
+      # в артефакт при любом событии — в Release не публикуем.
+      - name: Артефакт symbols
+        uses: actions/upload-artifact@v4
+        with:
+          name: rezak-symbols-${{ matrix.abi }}
+          path: build/app/outputs/symbols/
+          if-no-files-found: ignore
+          retention-days: 30
 
       # На тег — сразу прикрепляем APK к релизу (не тратит квоту артефактов).
       - name: Прикрепить к GitHub Release
