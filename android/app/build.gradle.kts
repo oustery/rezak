@@ -1,8 +1,9 @@
 // Сборка Android-приложения.
 //
-// Раздельные APK под архитектуры:
+// Раздельные APK под архитектуры (release и debug):
 //   flutter build apk --release --target-platform android-arm64   → arm64-v8a
 //   flutter build apk --release --target-platform android-arm     → armeabi-v7a
+//   flutter build apk --debug   --target-platform android-arm64   → arm64-v8a (debug)
 //
 // Начиная с Flutter 3.50 флаг --target-platform сам по себе НЕ вырезает
 // чужие .so из APK (внутри оказываются arm64-v8a + armeabi-v7a + x86_64).
@@ -13,9 +14,22 @@
 // а шаг «Переименование и проверка ABI» падает, если внутри APK больше
 // одной архитектуры, — то есть регрессию такого рода сборка не пропустит.
 
+import java.util.Properties
+
 plugins {
     id("com.android.application")
     id("dev.flutter.flutter-gradle-plugin")
+}
+
+// Подпись release-сборки читается из android/key.properties (файл в .gitignore).
+// Его создаёт CI: либо из секретов репозитория (KEYSTORE_*), либо рядом лежит
+// сгенерированный на время сборки release-ключ (rezak-release.jks). Без
+// key.properties release подписывается debug-ключом — локальная сборка
+// работает без настройки.
+val keystoreProperties = Properties()
+val keystorePropertiesFile = rootProject.file("key.properties")
+if (keystorePropertiesFile.exists()) {
+    keystorePropertiesFile.inputStream().use { keystoreProperties.load(it) }
 }
 
 // Какая ABI запрошена сборкой (Flutter передаёт -Ptarget-platform=...).
@@ -64,13 +78,25 @@ android {
         }
     }
 
+    signingConfigs {
+        if (keystorePropertiesFile.exists()) {
+            create("rezakRelease") {
+                keyAlias = keystoreProperties["keyAlias"] as String
+                keyPassword = keystoreProperties["keyPassword"] as String
+                storeFile = file(keystoreProperties["storeFile"] as String)
+                storePassword = keystoreProperties["storePassword"] as String
+            }
+        }
+    }
+
     buildTypes {
         release {
-            // Подпись: если CI передал keystore (см. workflow) — используем его,
-            // иначе debug-ключ, чтобы `flutter build apk --release`
-            // работал локально без настройки.
-            signingConfig = if (System.getenv("KEYSTORE_BASE64") != null) {
-                signingConfigs.getByName("release")
+            // CI кладёт android/key.properties (ключ из секретов либо
+            // сгенерированный release-ключ) → подписываем выделенным
+            // release-ключом; без файла — debug-ключ, чтобы локальная
+            // `flutter build apk --release` работала без настройки.
+            signingConfig = if (keystorePropertiesFile.exists()) {
+                signingConfigs.getByName("rezakRelease")
             } else {
                 signingConfigs.getByName("debug")
             }

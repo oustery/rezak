@@ -3,6 +3,35 @@
 Все значимые изменения проекта Rezak документируются в этом файле.
 Формат — [Keep a Changelog](https://keepachangelog.com/), версионирование — SemVer.
 
+## 1.1.0 — 2026-11-13
+
+### Добавлено
+
+- **Авто-релиз двух вариантов после компиляции.** CI собирает на каждую
+  архитектуру (arm64-v8a, armeabi-v7a) release- и debug-APK — всего четыре
+  файла: `rezak-<abi>-v<версия>.apk` и `rezak-<abi>-v<версия>-debug.apk`.
+  Оба варианта попадают в GitHub Release на теге и в артефакты workflow на push.
+- **Release-подпись в двух режимах.** Если заданы секреты `KEYSTORE_BASE64`,
+  `KEYSTORE_PASSWORD`, `KEY_ALIAS`, `KEY_PASSWORD` — release подписывается
+  вашим ключом (стабильная подпись между релизами). Иначе workflow генерирует
+  выделенный release-ключ (`keytool`, `CN=Rezak Release`) на время сборки:
+  release всегда подписан не debug-ключом.
+- **Debug-вариант** подписывается стандартным Android debug-ключом
+  (`androiddebugkey` / `android`).
+- **Проверка подписей в CI**: `keytool -printcert -jarfile` на обоих APK;
+  сборка падает, если release-APК оказался подписан debug-ключом.
+
+### Исправлено
+
+- **Gradle не применял key.properties.** Раньше workflow писал keystore и
+  `android/key.properties`, но `build.gradle.kts` их не читал: release всегда
+  подписывался debug-ключом даже при заданных секретах, а ветка
+  `System.getenv("KEYSTORE_BASE64")` выбирала пустой release-конфиг. Теперь
+  `signingConfigs` читает `key.properties` и подписывает release выделенным
+  ключом.
+- **Версия из тега.** Сборка на теге `v1.1.0` использует `--build-name 1.1.0`;
+  раньше на любых тегах ставилась фиксированная `1.0.0`.
+
 ## 1.0.0 — 2026-11-13
 
 Первый релиз под новым именем **Rezak** (ранее проект назывался Iframe Saver;

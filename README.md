@@ -115,29 +115,41 @@ flutter test --coverage      # + покрытие в coverage/lcov.info
 
 ---
 
-## 5. CI: релизные APK под arm64 и armv7
+## 5. CI: авто-релиз release и debug APK под arm64 и armv7
 
 `.github/workflows/release.yml` — три задачи:
 
 1. **Analyze & test** — `flutter analyze` + `flutter test`;
-2. **build-apk** — матрица из двух архитектур:
+2. **build-apk** — матрица из двух архитектур, в каждой собираются **оба варианта**:
 
-   | ABI | `--target-platform` | Артефакт |
-   |---|---|---|
-   | `arm64-v8a` | `android-arm64` | `rezak-arm64-v8a-v<версия>.apk` |
-   | `armeabi-v7a` | `android-arm` | `rezak-armeabi-v7a-v<версия>.apk` |
+   | ABI | Вариант | Артефакт | Подпись |
+   |---|---|---|---|
+   | `arm64-v8a` | release | `rezak-arm64-v8a-v<версия>.apk` | выделенный release-ключ |
+   | `arm64-v8a` | debug | `rezak-arm64-v8a-v<версия>-debug.apk` | стандартный Android debug-ключ |
+   | `armeabi-v7a` | release | `rezak-armeabi-v7a-v<версия>.apk` | выделенный release-ключ |
+   | `armeabi-v7a` | debug | `rezak-armeabi-v7a-v<версия>-debug.apk` | стандартный Android debug-ключ |
 
-   После сборки workflow **проверяет**, что внутри APK ровно одна архитектура и именно
-   ожидаемая (через `unzip -l | grep lib/`), и только потом переименовывает файл.
-3. **publish** — на тег `v*` создаёт GitHub Release и прикрепляет оба APK.
+   После сборки workflow **проверяет** каждый APK: ровно одна архитектура и именно
+   ожидаемая (через `unzip -l | grep lib/`), затем подписи (`keytool -printcert -jarfile`) —
+   release-APK обязан быть подписан **не** debug-ключом. Только после этого файлы
+   переименовываются и публикуются.
+3. **publish** — на тег `v*` создаёт GitHub Release и прикрепляет все четыре APK;
+   versionName берётся из тега (`v1.1.0` → `1.1.0`).
 
-Триггеры: push в `master`/`dev` (артефакты без релиза), тег `v*` (релиз), PR (только проверка),
-ручной запуск с параметром `build_name`. Отдельный `pr-check.yml` дополнительно проверяет
-`dart format --set-exit-if-changed`.
+Триггеры: push в `master`/`dev` (артефакты без релиза), тег `v*` (релиз), PR (проверка
+и сборка всех вариантов), ручной запуск с параметром `build_name`. Отдельный `pr-check.yml`
+дополнительно проверяет `dart format --set-exit-if-changed`.
 
-**Подпись.** Если в секретах репозитория задать `KEYSTORE_BASE64`, `KEYSTORE_PASSWORD`,
-`KEY_ALIAS`, `KEY_PASSWORD`, релиз подписывается вашим ключом; иначе используется debug-ключ
-(для локальной сборки этого достаточно).
+**Release-подпись, два режима.** Если в секретах репозитория заданы `KEYSTORE_BASE64`,
+`KEYSTORE_PASSWORD`, `KEY_ALIAS`, `KEY_PASSWORD` — release подписывается вашим ключом:
+подпись стабильна между релизами, APK обновляются поверх друг друга. Иначе CI **генерирует**
+выделенный release-ключ (`keytool`, `CN=Rezak Release`) на время сборки: release-APK
+подписан не debug-ключом, но ключ живёт только в рамках запуска — подпись между сборками
+меняется, и обновление поверх предыдущей версии может потребовать переустановку.
+Для стабильной подписи задайте секреты.
+
+**Debug-вариант** всегда подписан стандартным Android debug-ключом (`androiddebugkey` /
+`android`) и предназначен для тестов; ставить его рядом с release нельзя — один applicationId.
 
 Локально то же самое:
 
@@ -145,8 +157,11 @@ flutter test --coverage      # + покрытие в coverage/lcov.info
 flutter pub get
 flutter test
 flutter build apk --release --target-platform android-arm64   # arm64-v8a
-flutter build apk --release --target-platform android-arm     # armeabi-v7a
+flutter build apk --debug   --target-platform android-arm     # armeabi-v7a (debug)
 ```
+
+Локально, без `android/key.properties`, release подписывается debug-ключом — для
+разработки этого достаточно; CI всегда выпускает release с выделенной подписью.
 
 ---
 
