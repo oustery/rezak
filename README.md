@@ -151,6 +151,15 @@ flutter test --coverage      # + покрытие в coverage/lcov.info
 **Debug-вариант** всегда подписан стандартным Android debug-ключом (`androiddebugkey` /
 `android`) и предназначен для тестов; ставить его рядом с release нельзя — один applicationId.
 
+**Оптимизация размера.** Release собирается «худым»: ffmpeg-кит — вариант
+`ffmpeg_kit_flutter_new_https` (минимальная сборка + gnutls) вместо full-gpl —
+приложению нужен только ремюкс `-c copy` и ffprobe, кодеки x264/x265 не
+используются; Java/Kotlin-код плагинов прогоняется через R8 с shrinkResources
+(`android/app/proguard-rules.pro` защищает JNI-слои ffmpeg-kit и WebView);
+Dart-код обфусцируется (`--obfuscate`), символы выносятся в артефакт workflow
+`rezak-symbols-<abi>` — стектрейсы release расшифровываются через `flutter symbolize`.
+Debug-вариант не минифицируется и не обфусцируется — он для отладки.
+
 Локально то же самое:
 
 ```bash
@@ -177,8 +186,9 @@ flutter build apk --release --target-platform android-arm64
 iOS-папки нет — при необходимости `flutter create --platforms=ios .`.
 
 Зависимости: `dio` (API и чтение плейлиста), `flutter_inappwebview` (WebView со сниффером),
-`ffmpeg_kit_flutter_new` (ffmpeg/ffprobe на устройстве — поддерживаемый форк вышедшего
-на пенсию `ffmpeg-kit`), `path_provider`, `share_plus`, `material_ui`.
+`ffmpeg_kit_flutter_new_https` (ffmpeg/ffprobe на устройстве — поддерживаемый форк
+вышедшего на пенсию `ffmpeg-kit`, вариант «минимальный + TLS»: ремюкс и проверка
+потоков без тяжёлых кодеков), `path_provider`, `share_plus`, `material_ui`.
 
 ---
 
