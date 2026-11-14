@@ -100,8 +100,15 @@ android {
             } else {
                 signingConfigs.getByName("debug")
             }
-            isMinifyEnabled = false
-            isShrinkResources = false
+            // R8: вырезание неиспользуемого Java/Kotlin-кода и ресурсов
+            // плагинов (classes.dex в full-сборке занимал ~8.6 МБ).
+            // Правила в proguard-rules.pro защищают JNI-слои плагинов.
+            isMinifyEnabled = true
+            isShrinkResources = true
+            proguardFiles(
+                getDefaultProguardFile("proguard-android-optimize.txt"),
+                "proguard-rules.pro",
+            )
         }
     }
 }
